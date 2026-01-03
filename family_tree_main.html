@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>شجرة العائلة</title>
+  <style>
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f8fafc;color:#0f172a;direction:rtl}
+    .wrap{max-width:980px;margin:0 auto;padding:20px}
+    .header{display:flex;align-items:center;gap:12px}
+    .logo{width:48px;height:48px;border-radius:9999px;background:#90c290;display:grid;place-items:center;color:#fff;font-weight:700}
+    h1{margin:0;font-size:22px}
+    .subtitle{margin:10px 0 2px;text-align:center;font-style:italic;color:#334155}
+    .ver{margin:0 0 14px;text-align:center;font-size:12px;color:#64748b}
+    .card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px}
+    .status{white-space:pre-line;font-size:14px;color:#334155}
+    .btn{appearance:none;border:1px solid #e2e8f0;background:#fff;border-radius:10px;padding:8px 10px;cursor:pointer}
+    .btn:hover{background:#f1f5f9}
+
+    /* Tree */
+    .nodeWrap{position:relative;padding:4px 0;overflow:visible}
+    .circleRow{position:relative;display:inline-flex;align-items:center;justify-content:center;min-height:56px;z-index:3}
+    .circle{width:56px;height:56px;border-radius:9999px;border:1px solid #e5e7eb;box-shadow:0 1px 2px rgba(0,0,0,.06);
+      display:flex;align-items:center;justify-content:center;text-align:center;user-select:none;position:relative}
+    .circle span{padding:0 8px;font-size:12px;font-weight:700;color:#0f172a;line-height:1.2}
+    .toggle{position:absolute;left:-20px;top:50%;transform:translateY(-50%);width:24px;height:24px;border-radius:9999px;border:1px solid #e2e8f0;background:#fff;cursor:pointer;display:grid;place-items:center}
+    .toggle:hover{background:#f1f5f9}
+
+    .kids{position:relative;margin-top:4px;display:flex;flex-direction:column;gap:4px}
+
+    /* Lines layer */
+    .lines{position:absolute;z-index:2;pointer-events:none;overflow:visible}
+    .vline{position:absolute;right:0;background:#000;border-radius:1px;width:2px}
+    .hline{position:absolute;right:0;height:2px;background:#000;border-radius:1px}
+
+    .note{font-size:12px;color:#64748b;margin-top:10px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div class="logo">🌿</div>
+      <h1>شجرة العائلة</h1>
+    </div>
+    <div class="subtitle">🌿 تم تطويره بواسطة إيهاب عثمان تونجا 🌿</div>
+    <div class="ver">الإصدار: Shared HTML (Web + Android) — كل الصور مخفية</div>
+
+    <div class="card">
+      <div id="status" class="status">يتم التحميل...</div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button id="retryBtn" class="btn">إعادة المحاولة</button>
+        <button id="demoBtn" class="btn">عرض بيانات تجريبية</button>
+      </div>
+      <div class="note">
+        <div><b>Web (GitHub Pages):</b> ضع <code>TreeFamily_Main.xlsx</code> بجانب هذا الملف، وسيُقرأ تلقائيًا عبر <code>fetch('./TreeFamily_Main.xlsx')</code>.</div>
+        <div><b>Android APK Offline:</b> ضع هذا الملف و <code>TreeFamily_Main.xlsx</code> و <code>xlsx.full.min.js</code> داخل <code>assets/</code>، وسيتم القراءة من خلال Bridge.</div>
+      </div>
+    </div>
+
+    <div id="treeHost" style="margin-top:16px"></div>
+  </div>
+
+  <script>
+    // ---------------------- Config ----------------------
+    const XLSX_FILENAME = 'TreeFamily_Main.xlsx';
+
+    const PALETTE = [
+      '#E8F3FF','#EAF7F1','#FFF2E5','#F4E8FF',
+      '#FFF8CC','#E8FFF6','#FFE8F0','#EAF0FF'
+    ];
+
+    // ---------------------- Utilities ----------------------
+    const $ = (id) => document.getElementById(id);
+
+    function setStatus(msg){ $('status').textContent = msg; }
+
+    function hashString(s){
+      let h = 0;
+      for (let i=0;i<s.length;i++) { h = (h<<5) - h + s.charCodeAt(i); h |= 0; }
+      return Math.abs(h);
+    }
+
+    function deriveParent(id){
+      if (typeof id !== 'string') return null;
+      const s = id.trim();
+      const pos = s.lastIndexOf('.');
+      if (pos <= 0) return null;
+      return s.slice(0,pos);
+    }
+
+    function computeRoots(list){
+      const ids = new Set(list.map(p=>p.id));
+      const childIds = new Set();
+      for (const p of list){
+        const par = deriveParent(p.id);
+        if (par && ids.has(par)) childIds.add(p.id);
+      }
+      return list.filter(p=>!childIds.has(p.id)).map(p=>p.id);
+    }
+
+    // Group coloring: anchor = nearest ancestor that has children
+    function buildIndexes(people){
+      const byId = new Map();
+      for (const p of people) byId.set(p.id, p);
+
+      const children = new Map();
+      for (const p of people){
+        if (!p.id.includes('.')) continue;
+        const par = deriveParent(p.id);
+        if (par && byId.has(par)){
+          if (!children.has(par)) children.set(par, []);
+          children.get(par).push(p.id);
+        }
+      }
+      for (const [k, arr] of children.entries()) arr.sort((a,b)=>String(a).localeCompare(String(b),'en'));
+      return {byId, children};
+    }
+
+    function hasChildren(childrenMap, id){
+      const arr = childrenMap.get(id);
+      return Array.isArray(arr) && arr.length>0;
+    }
+
+    function anchorFor(childrenMap, id){
+      if (!id) return '';
+      if (hasChildren(childrenMap, id)) return id;
+      let cur = id;
+      while(true){
+        cur = deriveParent(cur);
+        if (!cur) return id;
+        if (hasChildren(childrenMap, cur)) return cur;
+      }
+    }
+
+    function colorFor(childrenMap, id){
+      const a = anchorFor(childrenMap, id);
+      return PALETTE[hashString(a) % PALETTE.length];
+    }
+
+    // ---------------------- XLSX loader (Web + Android) ----------------------
+    function loadScript(src){
+      return new Promise((resolve, reject)=>{
+        const s = document.createElement('script');
+        s.src = src; s.async = true;
+        s.onload = resolve; s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+
+    async function ensureXlsxLib(){
+      if (window.XLSX) return;
+      // Try local (for APK offline)
+      try {
+        await loadScript('./xlsx.full.min.js');
+        if (window.XLSX) return;
+      } catch {}
+      // Fallback CDN (for web)
+      await loadScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
+    }
+
+    function base64ToUint8Array(base64){
+      const bin = atob(base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+      return bytes;
+    }
+
+    // Android bridge options supported:
+    // 1) window.Android.getExcelBase64() -> returns base64 string
+    // 2) window.AndroidBridge.getExcelBase64() -> returns base64 string
+    async function tryLoadFromAndroidBridge(){
+      try {
+        const a = window.Android;
+        const b = window.AndroidBridge;
+        const fn = (a && typeof a.getExcelBase64 === 'function') ? a.getExcelBase64
+                 : (b && typeof b.getExcelBase64 === 'function') ? b.getExcelBase64
+                 : null;
+        if (!fn) return null;
+
+        const base64 = fn.call(a || b);
+        if (!base64 || typeof base64 !== 'string') return null;
+        return base64ToUint8Array(base64);
+      } catch {
+        return null;
+      }
+    }
+
+    async function tryLoadFromWebFetch(){
+      const candidates = [
+        `./${XLSX_FILENAME}`,
+        `${window.location.origin}${(window.location.pathname.endsWith('/')?window.location.pathname:window.location.pathname.replace(/[^/]*$/, ''))}${XLSX_FILENAME}`,
+        `/${XLSX_FILENAME}`
+      ];
+      const unique = Array.from(new Set(candidates));
+      for (const url of unique){
+        try {
+          const res = await fetch(url, {cache:'no-store'});
+          if (!res.ok) continue;
+          const buf = await res.arrayBuffer();
+          return new Uint8Array(buf);
+        } catch {}
+      }
+      return null;
+    }
+
+    async function loadExcelBytes(){
+      // Priority A: Android offline bridge
+      const fromAndroid = await tryLoadFromAndroidBridge();
+      if (fromAndroid) return { bytes: fromAndroid, source: 'android' };
+
+      // Priority B: Web fetch
+      const fromWeb = await tryLoadFromWebFetch();
+      if (fromWeb) return { bytes: fromWeb, source: 'web' };
+
+      return null;
+    }
+
+    // ---------------------- Parse & Render ----------------------
+    function pickHeaders(rows){
+      if (!rows.length) return { idKey: 'كود', nameKey: 'الاسم' };
+      const keys = Object.keys(rows[0] || {});
+      const idKey = keys.includes('كود') ? 'كود' : (keys[0] || 'كود');
+      const nameKey = keys.includes('الاسم') ? 'الاسم' : (keys[1] || 'الاسم');
+      return { idKey, nameKey };
+    }
+
+    function parsePeopleFromXlsxBytes(bytes){
+      const wb = XLSX.read(bytes, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const json = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      if (!json.length) throw new Error('Empty sheet');
+      const { idKey, nameKey } = pickHeaders(json);
+      const people = json
+        .map(r => ({ id: String(r[idKey] ?? '').trim(), name: String(r[nameKey] ?? '').trim() || '(بدون اسم)' }))
+        .filter(p => p.id);
+      if (!people.length) throw new Error('No valid rows');
+      return people;
+    }
+
+    // Render tree as nested DOM
+    function renderTree(people){
+      const host = $('treeHost');
+      host.innerHTML = '';
+
+      const { byId, children } = buildIndexes(people);
+      const roots = computeRoots(people);
+      const rootId = (roots.length ? roots.sort((a,b)=>a.length-b.length)[0] : people[0].id);
+
+      const expanded = new Set([rootId]);
+
+      function renderNode(id, depth){
+        const node = byId.get(id);
+        if (!node) return document.createTextNode('');
+
+        const kids = children.get(id) || [];
+        const isOpen = expanded.has(id);
+
+        const codeGen = id.split('.').length;
+        const visualDepth = Math.min(codeGen - 1, 3);
+
+        const wrap = document.createElement('div');
+        wrap.className = 'nodeWrap';
+        wrap.style.paddingInlineStart = (visualDepth * 20) + 'px';
+
+        // Lines layer (measured after DOM paint)
+        const lines = document.createElement('div');
+        lines.className = 'lines';
+        lines.style.display = (isOpen && kids.length) ? 'block' : 'none';
+        wrap.appendChild(lines);
+
+        // Circle row
+        const row = document.createElement('div');
+        row.className = 'circleRow';
+
+        const circle = document.createElement('div');
+        circle.className = 'circle node-circle';
+        circle.style.background = colorFor(children, id);
+        circle.title = node.name;
+
+        const label = document.createElement('span');
+        label.textContent = node.name;
+        circle.appendChild(label);
+
+        if (kids.length){
+          const btn = document.createElement('button');
+          btn.className = 'toggle';
+          btn.textContent = isOpen ? '−' : '+';
+          btn.addEventListener('click', () => {
+            if (expanded.has(id)) expanded.delete(id); else expanded.add(id);
+            // re-render entire tree (simple + robust)
+            renderTree(people);
+          });
+          circle.appendChild(btn);
+        }
+
+        row.appendChild(circle);
+        wrap.appendChild(row);
+
+        // Kids container
+        if (isOpen && kids.length){
+          const kidsBox = document.createElement('div');
+          kidsBox.className = 'kids';
+          for (const cid of kids){
+            const childWrap = document.createElement('div');
+            childWrap.dataset.directChild = 'true';
+            childWrap.appendChild(renderNode(cid, depth+1));
+            kidsBox.appendChild(childWrap);
+          }
+          wrap.appendChild(kidsBox);
+
+          // measure + draw lines
+          requestAnimationFrame(() => {
+            try {
+              const wrapRect = wrap.getBoundingClientRect();
+              const circleRect = circle.getBoundingClientRect();
+
+              // column x from parent's right edge
+              const lineRight = wrapRect.right - circleRect.right;
+
+              const childCenters = Array.from(kidsBox.children).map(el => {
+                const c = el.querySelector('.node-circle');
+                const r = c.getBoundingClientRect();
+                return { cy: r.top + r.height/2 - wrapRect.top, left: r.left };
+              });
+
+              const parentCY = circleRect.top + circleRect.height/2 - wrapRect.top;
+              const firstCY = childCenters[0]?.cy ?? parentCY;
+              const lastCY  = childCenters[childCenters.length-1]?.cy ?? parentCY;
+              const topBound = Math.min(parentCY, firstCY);
+              const bottomBound = Math.max(parentCY, lastCY);
+
+              lines.style.right = lineRight + 'px';
+              lines.style.top = topBound + 'px';
+              lines.style.height = Math.max(0, bottomBound - topBound) + 'px';
+              lines.style.width = '2px';
+
+              lines.innerHTML = '';
+
+              // vertical line from parent to last child
+              const v = document.createElement('div');
+              v.className = 'vline';
+              v.style.top = (parentCY - topBound) + 'px';
+              v.style.height = Math.max(0, lastCY - parentCY) + 'px';
+              lines.appendChild(v);
+
+              // horizontal ticks
+              childCenters.forEach(({cy, left}) => {
+                const h = document.createElement('div');
+                h.className = 'hline';
+                h.style.top = (cy - topBound - 1) + 'px';
+                // width from parent's right edge to child's left edge
+                h.style.width = Math.max(0, circleRect.right - left) + 'px';
+                lines.appendChild(h);
+              });
+            } catch {
+              // ignore line drawing errors
+            }
+          });
+        }
+
+        return wrap;
+      }
+
+      host.appendChild(renderNode(rootId, 0));
+    }
+
+    function renderDemo(){
+      setStatus('✅ عرض بيانات تجريبية.');
+      renderTree([
+        {id:'1', name:'الجد'},
+        {id:'1.1', name:'الابن 1'},
+        {id:'1.2', name:'الابن 2'},
+        {id:'1.1.1', name:'الحفيد 1'},
+        {id:'2', name:'فرع آخر'}
+      ]);
+    }
+
+    async function boot(){
+      setStatus('⏳ تحميل مكتبة XLSX...');
+      try {
+        await ensureXlsxLib();
+      } catch {
+        setStatus('⚠️ تعذّر تحميل مكتبة XLSX.\nفي وضع Android Offline: ضع xlsx.full.min.js بجانب هذا الملف داخل assets.');
+        return;
+      }
+
+      setStatus('⏳ تحميل ملف Excel تلقائيًا...');
+      const loaded = await loadExcelBytes();
+      if (!loaded){
+        setStatus(`⚠️ لم أستطع تحميل ${XLSX_FILENAME}.\n- Web: تأكد أنه بجانب هذا الملف على GitHub Pages.\n- Android: تأكد أن Bridge يعيد Base64 للملف.`);
+        renderDemo();
+        return;
+      }
+
+      try {
+        const people = parsePeopleFromXlsxBytes(loaded.bytes);
+        setStatus(`✅ تم تحميل ${XLSX_FILENAME} تلقائيًا (${loaded.source}).`);
+        renderTree(people);
+      } catch (e){
+        setStatus(`⚠️ تم تحميل الملف لكن فشل تحليله.\nالسبب: ${String(e?.message || e)}`);
+        renderDemo();
+      }
+    }
+
+    // Buttons
+    $('retryBtn').addEventListener('click', boot);
+    $('demoBtn').addEventListener('click', renderDemo);
+
+    // Basic runtime tests (kept + added)
+    (function tests(){
+      console.assert(deriveParent('1.2.3') === '1.2', 'deriveParent 1');
+      console.assert(deriveParent('1') === null, 'deriveParent 2');
+      console.assert(deriveParent(' 3.4 ') === '3', 'deriveParent trims');
+      console.assert(computeRoots([{id:'1',name:'a'},{id:'1.1',name:'b'},{id:'2',name:'c'}]).length === 2, 'computeRoots');
+      // new tests
+      const idx = buildIndexes([{id:'1',name:'a'},{id:'1.1',name:'b'}]);
+      console.assert(idx.byId.has('1') && idx.children.get('1')?.[0] === '1.1', 'buildIndexes');
+      console.assert(PALETTE.includes(colorFor(idx.children, '1.1')), 'colorFor');
+    })();
+
+    // Auto start
+    boot();
+  </script>
+</body>
+</html>
