@@ -7,15 +7,7 @@
   <style>
     body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f8fafc;color:#0f172a;direction:rtl}
     .wrap{max-width:980px;margin:0 auto;padding:20px}
-    .header{display:flex;align-items:center;gap:12px}
-    .logo{width:48px;height:48px;border-radius:9999px;background:#90c290;display:grid;place-items:center;color:#fff;font-weight:700}
-    h1{margin:0;font-size:22px}
-    .subtitle{margin:10px 0 2px;text-align:center;font-style:italic;color:#334155}
-    .ver{margin:0 0 14px;text-align:center;font-size:12px;color:#64748b}
-    .card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px}
-    .status{white-space:pre-line;font-size:14px;color:#334155}
-    .btn{appearance:none;border:1px solid #e2e8f0;background:#fff;border-radius:10px;padding:8px 10px;cursor:pointer}
-    .btn:hover{background:#f1f5f9}
+    .subtitle{margin:0 0 14px;text-align:center;font-style:italic;color:#334155}
 
     /* Tree */
     .nodeWrap{position:relative;padding:4px 0;overflow:visible}
@@ -32,32 +24,12 @@
     .lines{position:absolute;z-index:2;pointer-events:none;overflow:visible}
     .vline{position:absolute;right:0;background:#000;border-radius:1px;width:2px}
     .hline{position:absolute;right:0;height:2px;background:#000;border-radius:1px}
-
-    .note{font-size:12px;color:#64748b;margin-top:10px}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="header">
-      <div class="logo">🌿</div>
-      <h1>شجرة العائلة</h1>
-    </div>
-    <div class="subtitle">🌿 تم تطويره بواسطة إيهاب عثمان تونجا 🌿</div>
-    <div class="ver">الإصدار: Shared HTML (Web + Android) — كل الصور مخفية</div>
-
-    <div class="card">
-      <div id="status" class="status">يتم التحميل...</div>
-      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
-        <button id="retryBtn" class="btn">إعادة المحاولة</button>
-        <button id="demoBtn" class="btn">عرض بيانات تجريبية</button>
-      </div>
-      <div class="note">
-        <div><b>Web (GitHub Pages):</b> ضع <code>TreeFamily_Main.xlsx</code> بجانب هذا الملف، وسيُقرأ تلقائيًا عبر <code>fetch('./TreeFamily_Main.xlsx')</code>.</div>
-        <div><b>Android APK Offline:</b> ضع هذا الملف و <code>TreeFamily_Main.xlsx</code> و <code>xlsx.full.min.js</code> داخل <code>assets/</code>، وسيتم القراءة من خلال Bridge.</div>
-      </div>
-    </div>
-
-    <div id="treeHost" style="margin-top:16px"></div>
+    <div class="subtitle">الاصدارة الاولى</div>
+    <div id="treeHost"></div>
   </div>
 
   <script>
@@ -71,8 +43,6 @@
 
     // ---------------------- Utilities ----------------------
     const $ = (id) => document.getElementById(id);
-
-    function setStatus(msg){ $('status').textContent = msg; }
 
     function hashString(s){
       let h = 0;
@@ -237,6 +207,10 @@
       return people;
     }
 
+    // ✅ Persist expand/collapse across re-renders (FIX for + not opening)
+    let EXPANDED = new Set();
+    let EXPANDED_ROOT = null;
+
     // Render tree as nested DOM
     function renderTree(people){
       const host = $('treeHost');
@@ -246,14 +220,24 @@
       const roots = computeRoots(people);
       const rootId = (roots.length ? roots.sort((a,b)=>a.length-b.length)[0] : people[0].id);
 
-      const expanded = new Set([rootId]);
+      // initialize/reset expansion when data/root changes
+      if (EXPANDED_ROOT !== rootId){
+        EXPANDED_ROOT = rootId;
+        EXPANDED = new Set([rootId]);
+      } else {
+        // clean invalid ids (if any)
+        for (const id of Array.from(EXPANDED)){
+          if (!byId.has(id)) EXPANDED.delete(id);
+        }
+        if (!EXPANDED.size) EXPANDED.add(rootId);
+      }
 
-      function renderNode(id, depth){
+      function renderNode(id){
         const node = byId.get(id);
         if (!node) return document.createTextNode('');
 
         const kids = children.get(id) || [];
-        const isOpen = expanded.has(id);
+        const isOpen = EXPANDED.has(id);
 
         const codeGen = id.split('.').length;
         const visualDepth = Math.min(codeGen - 1, 3);
@@ -284,11 +268,12 @@
         if (kids.length){
           const btn = document.createElement('button');
           btn.className = 'toggle';
+          btn.type = 'button';
           btn.textContent = isOpen ? '−' : '+';
-          btn.addEventListener('click', () => {
-            if (expanded.has(id)) expanded.delete(id); else expanded.add(id);
-            // re-render entire tree (simple + robust)
-            renderTree(people);
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (EXPANDED.has(id)) EXPANDED.delete(id); else EXPANDED.add(id);
+            renderTree(people); // re-render with persisted EXPANDED
           });
           circle.appendChild(btn);
         }
@@ -303,7 +288,7 @@
           for (const cid of kids){
             const childWrap = document.createElement('div');
             childWrap.dataset.directChild = 'true';
-            childWrap.appendChild(renderNode(cid, depth+1));
+            childWrap.appendChild(renderNode(cid));
             kidsBox.appendChild(childWrap);
           }
           wrap.appendChild(kidsBox);
@@ -361,11 +346,10 @@
         return wrap;
       }
 
-      host.appendChild(renderNode(rootId, 0));
+      host.appendChild(renderNode(rootId));
     }
 
     function renderDemo(){
-      setStatus('✅ عرض بيانات تجريبية.');
       renderTree([
         {id:'1', name:'الجد'},
         {id:'1.1', name:'الابن 1'},
@@ -376,47 +360,29 @@
     }
 
     async function boot(){
-      setStatus('⏳ تحميل مكتبة XLSX...');
       try {
         await ensureXlsxLib();
       } catch {
-        setStatus('⚠️ تعذّر تحميل مكتبة XLSX.\nفي وضع Android Offline: ضع xlsx.full.min.js بجانب هذا الملف داخل assets.');
+        renderDemo();
         return;
       }
 
-      setStatus('⏳ تحميل ملف Excel تلقائيًا...');
       const loaded = await loadExcelBytes();
       if (!loaded){
-        setStatus(`⚠️ لم أستطع تحميل ${XLSX_FILENAME}.\n- Web: تأكد أنه بجانب هذا الملف على GitHub Pages.\n- Android: تأكد أن Bridge يعيد Base64 للملف.`);
         renderDemo();
         return;
       }
 
       try {
         const people = parsePeopleFromXlsxBytes(loaded.bytes);
-        setStatus(`✅ تم تحميل ${XLSX_FILENAME} تلقائيًا (${loaded.source}).`);
+        // reset expansion when loading a new dataset
+        EXPANDED = new Set();
+        EXPANDED_ROOT = null;
         renderTree(people);
-      } catch (e){
-        setStatus(`⚠️ تم تحميل الملف لكن فشل تحليله.\nالسبب: ${String(e?.message || e)}`);
+      } catch {
         renderDemo();
       }
     }
-
-    // Buttons
-    $('retryBtn').addEventListener('click', boot);
-    $('demoBtn').addEventListener('click', renderDemo);
-
-    // Basic runtime tests (kept + added)
-    (function tests(){
-      console.assert(deriveParent('1.2.3') === '1.2', 'deriveParent 1');
-      console.assert(deriveParent('1') === null, 'deriveParent 2');
-      console.assert(deriveParent(' 3.4 ') === '3', 'deriveParent trims');
-      console.assert(computeRoots([{id:'1',name:'a'},{id:'1.1',name:'b'},{id:'2',name:'c'}]).length === 2, 'computeRoots');
-      // new tests
-      const idx = buildIndexes([{id:'1',name:'a'},{id:'1.1',name:'b'}]);
-      console.assert(idx.byId.has('1') && idx.children.get('1')?.[0] === '1.1', 'buildIndexes');
-      console.assert(PALETTE.includes(colorFor(idx.children, '1.1')), 'colorFor');
-    })();
 
     // Auto start
     boot();
